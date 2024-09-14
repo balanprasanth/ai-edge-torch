@@ -112,7 +112,13 @@ class GroupNorm(torch.nn.Module):
 
 class LayerNorm(torch.nn.Module):
 
-  def __init__(self, dim: int, eps: float = 1e-5, enable_hlfb: bool = False):
+  def __init__(
+      self,
+      dim: int,
+      eps: float = 1e-5,
+      enable_hlfb: bool = False,
+      use_input_shape: bool = True,
+  ):
     """Initialize the LayerNorm layer.
 
     Args:
@@ -121,9 +127,12 @@ class LayerNorm(torch.nn.Module):
         1e-6).
       enable_hlfb (bool): Whether to convert this normalization into a single
         op.
+      use_input_shape (bool): Whether to use the input shape to determine the
+        dimension of normalization.
     """
     super().__init__()
     self.enable_hlfb = enable_hlfb
+    self.use_input_shape = use_input_shape
     self.eps = eps
     self.weight = torch.nn.Parameter(torch.ones(dim))
     self.bias = torch.nn.Parameter(torch.ones(dim))
@@ -137,9 +146,11 @@ class LayerNorm(torch.nn.Module):
     Returns:
       torch.Tensor: output tensor after applying LayerNorm.
     """
+    normalized_shape = x.shape if self.use_input_shape else self.weight.shape
     if self.enable_hlfb:
       return layer_norm_with_hlfb(
           x,
+          normalized_shape,
           self.weight,
           self.bias,
           self.eps,
@@ -147,9 +158,9 @@ class LayerNorm(torch.nn.Module):
     else:
       return F.layer_norm(
           x,
-          x.shape,
-          self.weight.broadcast_to(x.shape),
-          self.bias.broadcast_to(x.shape),
+          normalized_shape,
+          self.weight.broadcast_to(normalized_shape),
+          self.bias.broadcast_to(normalized_shape),
           self.eps,
       )
 
@@ -190,6 +201,7 @@ def group_norm_with_hlfb(
 
 def layer_norm_with_hlfb(
     x: torch.Tensor,
+    normalized_shape: torch.Tensor,
     w: torch.Tensor,
     b: torch.Tensor,
     eps: float,
@@ -198,6 +210,7 @@ def layer_norm_with_hlfb(
 
   Args:
     x (torch.Tensor): Input tensor for Layer Normalization.
+    normalized_shape (torch.Tensor): The shape of the normalized tensor.
     w (torch.Tensor): The weight tensor for the normalization.
     b (torch.Tensor): The bias tensor for the normalization.
     eps (float): A small float value to ensure numerical stability.
@@ -209,9 +222,9 @@ def layer_norm_with_hlfb(
   x, w, b = builder.mark_inputs(x, w, b)
   y = F.layer_norm(
       x,
-      x.shape,
-      weight=w.broadcast_to(x.shape),
-      bias=b.broadcast_to(x.shape),
+      normalized_shape,
+      weight=w.broadcast_to(normalized_shape),
+      bias=b.broadcast_to(normalized_shape),
       eps=eps,
   )
   y = builder.mark_outputs(y)
