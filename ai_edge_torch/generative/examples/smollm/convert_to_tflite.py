@@ -18,15 +18,13 @@
 import os
 import pathlib
 
-import ai_edge_torch
 from ai_edge_torch.generative.examples.smollm import smollm
-from ai_edge_torch.generative.layers import kv_cache as kv_utils
-from ai_edge_torch.generative.quantize import quant_recipes
-import torch
+from ai_edge_torch.generative.utilities import converter
 
 
 def convert_smollm_to_tflite(
     checkpoint_path: str,
+    tflite_path_prefix: str = '/tmp/smollm',
     prefill_seq_len: int = 512,
     kv_cache_max_len: int = 1024,
     quantize: bool = True,
@@ -36,6 +34,7 @@ def convert_smollm_to_tflite(
   Args:
       checkpoint_path (str): The filepath to the model checkpoint, or directory
         holding the checkpoint.
+      tflite_path_prefix (str): The prefix of the tflite file path to export.
       prefill_seq_len (int, optional): The maximum size of prefill input tensor.
         Defaults to 512.
       kv_cache_max_len (int, optional): The maximum size of KV cache buffer,
@@ -46,38 +45,12 @@ def convert_smollm_to_tflite(
   pytorch_model = smollm.build_model(
       checkpoint_path, kv_cache_max_len=kv_cache_max_len
   )
-  # Tensors used to trace the model graph during conversion.
-  prefill_tokens = torch.full((1, prefill_seq_len), 0, dtype=torch.int)
-  prefill_input_pos = torch.arange(0, prefill_seq_len, dtype=torch.int)
-  decode_token = torch.tensor([[0]], dtype=torch.int)
-  decode_input_pos = torch.tensor([0], dtype=torch.int)
-  kv = kv_utils.KVCache.from_model_config(pytorch_model.config)
-
-  quant_config = quant_recipes.full_int8_dynamic_recipe() if quantize else None
-  edge_model = (
-      ai_edge_torch.signature(
-          'prefill',
-          pytorch_model,
-          sample_kwargs={
-              'tokens': prefill_tokens,
-              'input_pos': prefill_input_pos,
-              'kv_cache': kv,
-          },
-      )
-      .signature(
-          'decode',
-          pytorch_model,
-          sample_kwargs={
-              'tokens': decode_token,
-              'input_pos': decode_input_pos,
-              'kv_cache': kv,
-          },
-      )
-      .convert(quant_config=quant_config)
-  )
-  quant_suffix = 'q8' if quantize else 'f32'
-  edge_model.export(
-      f'/tmp/smollm_{quant_suffix}_seq{prefill_seq_len}_ekv{kv_cache_max_len}.tflite'
+  converter.convert_to_tflite(
+      pytorch_model,
+      tflite_path_prefix=tflite_path_prefix,
+      prefill_seq_len=prefill_seq_len,
+      kv_cache_max_len=kv_cache_max_len,
+      quantize=quantize,
   )
 
 
